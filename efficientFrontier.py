@@ -1,3 +1,4 @@
+import argparse
 import pandas as pd  
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,29 +7,69 @@ import datetime as dt
 from pandas_datareader import data as pdr
 import scipy.optimize as sc
 
-plt.style.use('seaborn-deep')
+plt.style.use('seaborn')
 np.random.seed(537)
 
-stockList = ['AAPL', 'AMZN', 'BAC', 'TSLA']
+cli=argparse.ArgumentParser()
+cli.add_argument(
+  "--stocks",  
+  help='The stocks to include in portfolio',
+  nargs="*",  
+  type=str,
+  default=['AAPL', 'AMZN', 'BAC', 'TSLA'],  
+)
+cli.add_argument(
+  "--num",  
+  help='The number of portfolios to be simulated',
+  nargs=1, 
+  type=int,
+  default=25000, 
+)
+cli.add_argument(
+  "--rfr",  
+  help='The risk free rate of return',
+  nargs=1, 
+  type=float,
+  default=0.075,  
+)
+cli.add_argument(
+  "--years",  
+  help='The number of years',
+  nargs=1, 
+  type=int,
+  default=[1],  
+)
+
+args = cli.parse_args()
+
+# stockList = ['AAPL', 'AMZN', 'BAC', 'TSLA']
 # stock = [stock + '.AX' for stock in stockList]
-stock = stockList
+stock = args.stocks
+numPortfolios = args.num
+riskFreeRate = args.rfr
+yr = [str(integer) for integer in args.years]
+y = "".join(yr)
+yr = int(y)
+day = yr*365
+mktDay = yr*252
 
 endDate = dt.datetime.now()
-startDate = endDate-dt.timedelta(days=365)
+startDate = endDate-dt.timedelta(days=day)
 
 def getData(stocks, start, end):
     stockData = pdr.get_data_yahoo(stocks, start=start, end=end)
     stockData = stockData['Close']
+    # print(stockData)
     returns = stockData.pct_change()
     meanReturns = returns.mean()
     covMatrix = returns.cov()
-    return meanReturns, covMatrix
+    return meanReturns, covMatrix, returns, stockData
 
 # print(getData(stock, startDate, endDate))
 
 def portfolioPerformance(weights, meanReturns, covMatrix):
-    returns = np.sum(meanReturns*weights)*252
-    std = np.sqrt(np.dot(weights.T, np.dot(covMatrix, weights)))*np.sqrt(252)
+    returns = np.sum(meanReturns*weights)*(mktDay)
+    std = np.sqrt(np.dot(weights.T, np.dot(covMatrix, weights)))*np.sqrt(mktDay)
     return returns, std
 
 def randomPortfolios(numPortfolios, meanReturns, covMatrix, riskFreeRate):
@@ -44,9 +85,8 @@ def randomPortfolios(numPortfolios, meanReturns, covMatrix, riskFreeRate):
         results[2,i] = (portfolioReturn - riskFreeRate)/portfolioStd
     return results, weightsList
 
-meanReturns, covMatrix = getData(stock, startDate, endDate)
-numPortfolios = 20000
-riskFreeRate = 0.05
+meanReturns, covMatrix, returns, table = getData(stock, startDate, endDate)
+
 
 def negativeSharpeRatio(weights, meanReturns, covMatrix, riskFreeRate):
     pReturns, pStd = portfolioPerformance(weights, meanReturns, covMatrix)
@@ -104,18 +144,22 @@ def display_calculated_ef_with_random(meanReturns, covMatrix, numPortfolios, ris
     results, _ = randomPortfolios(numPortfolios, meanReturns, covMatrix, riskFreeRate)
     
     maxSR = maxSharpeRatio(meanReturns, covMatrix, riskFreeRate)
+    # print(maxSR)
     rp, sdp = portfolioPerformance(maxSR['x'], meanReturns, covMatrix)
-    maxSR_allocation = pd.DataFrame(maxSR.x,index=meanReturns.index,columns=['allocation'])
-    maxSR_allocation.allocation = [round(i*100,2)for i in maxSR_allocation.allocation]
+    maxSR_allocation = pd.DataFrame(maxSR.x,index=meanReturns.index,columns=['Allocation'])
+    maxSR_allocation.Allocation = [round(i*100,2)for i in maxSR_allocation.Allocation]
     maxSR_allocation = maxSR_allocation.T
     maxSR_allocation
 
     minVol = minimizeVariance(meanReturns, covMatrix, riskFreeRate)
     rp_min, sdp_min = portfolioPerformance(minVol['x'], meanReturns, covMatrix)
-    minVol_allocation = pd.DataFrame(minVol.x,index=meanReturns.index,columns=['allocation'])
-    minVol_allocation.allocation = [round(i*100,2)for i in minVol_allocation.allocation]
+    minVol_allocation = pd.DataFrame(minVol.x,index=meanReturns.index,columns=['Allocation'])
+    minVol_allocation.Allocation = [round(i*100,2)for i in minVol_allocation.Allocation]
     minVol_allocation = minVol_allocation.T
     
+    an_vol = np.std(returns) * np.sqrt(mktDay)
+    an_rt = meanReturns * mktDay
+
     print ("-"*80)
     print ("Maximum Sharpe Ratio Portfolio Allocation\n")
     print ("Annualised Return:", round(rp,2))
@@ -126,20 +170,58 @@ def display_calculated_ef_with_random(meanReturns, covMatrix, numPortfolios, ris
     print ("Annualised Return:", round(rp_min,2))
     print ("Annualised Volatility:", round(sdp_min,2))
     print (minVol_allocation)
+    print ("Individual Stock Returns and Volatility\n")
+    maxEF=0
+    minEF=1
+    maxVol=0
+    for i, txt in enumerate(table.columns):
+        if(an_rt[i]>maxEF):
+            maxEF=an_rt[i]
+        if(an_rt[i]<minEF):
+            minEF=an_rt[i]
+        if(an_vol[i]>maxVol):
+            maxVol=an_vol[i]
+        print(txt,":","Annualized Return = ", round(an_rt[i]*100,2), ", Annualized Volatility = ",round(an_vol[i]*100,2))
+    print ("-"*80)
     
-    plt.figure(figsize=(10, 7))
-    plt.scatter(results[0,:],results[1,:],c=results[2,:],cmap='YlGnBu', marker='o', s=5, alpha=0.3)
-    plt.colorbar()
-    plt.scatter(sdp,rp,marker='o',color='r',s=100, label='Maximum Sharpe Ratio')
-    plt.scatter(sdp_min,rp_min,marker='o',color='g',s=100, label='Minimum Volatility')
+    plt.subplots(figsize=(10, 7))
+    # plt.margins(y=0)
+    plt.scatter(an_vol,an_rt,marker='o', s=20, color='black')
+    
+    x = np.linspace(riskFreeRate, maxEF, 50)
+    cml = riskFreeRate-x*maxSR['fun'] # Since negative of Sharpe Ratio is being maximized
+    plt.plot(x, cml,'b', label="Capital Market Line")
+    # plt.plot([0,riskFreeRate],[sdp_min,rp], 'b', label="Capital Market")
 
-    target = np.linspace(rp_min, 0.32, 20)
+    plt.scatter(results[0,:], results[1,:], c=results[2,:], cmap='plasma', marker='o', s=5, alpha=0.5)
+    plt.colorbar(label='Sharpe Ratio')
+    # plt.scatter(sdp,rp,marker='o',color='r',s=50, label='Maximum Sharpe Ratio')
+    # plt.scatter(sdp_min,rp_min,marker='o',color='g',s=50, label='Minimum Volatility')
+    for i, txt in enumerate(table.columns):
+        plt.annotate(txt, (an_vol[i],an_rt[i]), xytext=(10,0), textcoords='offset points')
+    plt.scatter(sdp,rp,marker='D',color='r',s=50, label='Maximum Sharpe Ratio')
+    plt.scatter(sdp_min,rp_min,marker='D',color='g',s=50, label='Minimum Volatility')
+
+    target = np.linspace(rp_min, maxEF, 50)
     efficientPortfolios = efficientFrontier(meanReturns, covMatrix, target)
-    plt.plot([p['fun'] for p in efficientPortfolios], target, linestyle='-', color='black', label='efficient frontier')
+    plt.plot([p['fun'] for p in efficientPortfolios], target, 'k--', label='Efficient Frontier')
     plt.title('Portfolio Optimization based on Efficient Frontier')
-    plt.xlabel('Annualized Volatility')
-    plt.ylabel('Annualized Returns')
+    plt.xlabel('Annualized Volatility (%)')
+    plt.ylabel('Annualized Returns (%)')
     plt.legend(labelspacing=0.8)
+    # plt.ylim(0.5*minEF,1.15*maxEF)
+    # plt.xlim(0.85*sdp_min,1.05*maxVol)
+    # plt.plot([p['fun'] for p in efficientPortfolios], target, 'r--', label='Efficient Frontier')
+    # plt.set_title('Portfolio Optimization with Individual Stocks')
+    # plt.set_xlabel('Annualized Volatility (%)')
+    # plt.set_ylabel('Annualised Returns (%)')
+    # plt.legend(labelspacing=0.8)
     return plt.show()
 
-display_calculated_ef_with_random(meanReturns, covMatrix, numPortfolios, riskFreeRate)
+def main():
+    print("Stocks: ", stock)
+    print("Risk Free Rate: ", riskFreeRate)
+    display_calculated_ef_with_random(meanReturns, covMatrix, numPortfolios, riskFreeRate)
+
+if __name__ == "__main__":
+    main()
